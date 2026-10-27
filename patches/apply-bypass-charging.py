@@ -7,9 +7,14 @@ Bypass Charging — Phase 1: Charge-disable vote + safety checks
 WHAT THIS DOES
 --------------
 Adds a bypass vote on the main charger's charge-enable switch (CHG_DISABLE
-votable). The input path stays up; thermal, JEITA and fast-charge-finish keep
-their own votes on the same votable, and bypass releases only when every voter
-does — so it combines safely with existing code.
+votable). Stops charge current into the battery while keeping the input path
+up. Thermal, JEITA and fast-charge-finish keep their own votes on the same
+votable, and bypass releases only when every voter does.
+
+IMPORTANT: Phase 1 does NOT request higher PD voltage. The adapter may fall
+back to ~5 V (~15 W). Heavy gaming loads can exceed this, and the battery
+will supplement the difference. Use phase 2 for true pass-through (charger
+powers the system, battery does not drain).
 
 Controls (kernel module parameters, default OFF at boot):
   bypass_mode    : 0 = off (default), 1 = always while plugged & above floor,
@@ -24,8 +29,6 @@ A kernel manager (NKM / FKM / custom sysfs) can write bypass_mode=1 or 2 to
 Safety
 ------
   * Always off at boot — a crashed app can't leave bypass on across a reboot.
-  * battery_input_suspend reads 1 while bypass is on so the PD manager takes
-    its existing night-charging exit (stops charge pump).
   * Night-charging logic looks only at the user vote — bypass never fights it.
 
 BUILD
@@ -35,7 +38,7 @@ unchanged. Every anchor must match or the build fails loudly (exit 1).
 
 NOT IN THIS PHASE
 -----------------
-  * 9 V PD power request (adapter still falls back to ~5 V / ~15 W).
+  * 9 V PD power request (adapter falls back to ~5 V / ~15 W).
   * Battery-drain guard / watchdog (needs device data to confirm current sign).
 """
 
@@ -265,46 +268,10 @@ def patch_sm5_lib(kernel_src):
 
 	content = content[:insert_pos] + BYPASS_C + "\n" + content[insert_pos:]
 
-	# --- Anchor A: battery_input_suspend getter → report suspend while bypass on ---
-	getter_sig = "static int smblib_get_prop_battery_input_suspend"
-	if getter_sig not in content:
-		getter_sig = "int smblib_get_prop_battery_input_suspend"
-	if getter_sig not in content:
-		print("❌ [BYPASS] battery_input_suspend getter not found — aborting.")
-		return False
-
-	g_start = content.find(getter_sig)
-	g_end = content.find("\n}", g_start)
-	if g_end == -1:
-		print("❌ [BYPASS] Could not find end of getter — aborting.")
-		return False
-	g_end = content.find("\n", g_end) + 1
-
-	getter_body = content[g_start:g_end]
-
-	bypass_getter_hook = r'''
-	/* EXTREME++ bypass: report suspend while bypass is active */
-	mutex_lock(&bypass_lock);
-	if (bypass_active) {
-		mutex_unlock(&bypass_lock);
-		val->intval = 1;
-		return 0;
-	}
-	mutex_unlock(&bypass_lock);
-'''
-
-	last_return = getter_body.rfind("return")
-	if last_return == -1:
-		print("❌ [BYPASS] No return found in getter — aborting.")
-		return False
-
-	indent = _indent_before_return(getter_body, last_return)
-
-	new_getter = (getter_body[:last_return] +
-	              bypass_getter_hook +
-	              indent + getter_body[last_return:])
-
-	content = content[:g_start] + new_getter + content[g_end:]
+	# --- Anchor A: (REMOVED in phase 1 — phase 2 handles PD voltage)
+	#   We intentionally do NOT set battery_input_suspend=1 here, because that
+	#   tells the PD manager to stop the charge pump and park at 5V (~15W).
+	#   Phase 2 adds a proper PD bypass state that requests 9V+ instead.
 
 	# --- Anchor B: set_battery_input_suspend → release bypass when set to 0 ---
 	setter_sig = "static void smblib_set_battery_input_suspend"

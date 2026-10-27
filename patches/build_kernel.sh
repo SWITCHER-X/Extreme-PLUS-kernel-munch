@@ -248,6 +248,25 @@ else
     echo "[*] Bypass charging disabled (EXTREME_BYPASS not set)."
 fi
 
+# Bypass charging phase 2 — true pass-through (charger powers system)
+# Requires EXTREME_BYPASS=1 (phase 1) to also be enabled.
+if [ "${EXTREME_BYPASS_PHASE2:-0}" = "1" ]; then
+    if [ "${EXTREME_BYPASS:-0}" != "1" ]; then
+        echo "❌ [BYPASS-P2] EXTREME_BYPASS_PHASE2=1 but EXTREME_BYPASS is not set!"
+        echo "   Phase 2 requires phase 1. Set both: EXTREME_BYPASS=1 EXTREME_BYPASS_PHASE2=1"
+        exit 1
+    fi
+    if [ -f "apply-bypass-charging-phase2.py" ]; then
+        echo "[*] Applying EXTREME++ Bypass Charging (Phase 2 - True Pass-Through)..."
+        python3 apply-bypass-charging-phase2.py . || { echo "❌ [BYPASS-P2] Patch failed — aborting!"; exit 1; }
+    else
+        echo "❌ [BYPASS-P2] EXTREME_BYPASS_PHASE2=1 but apply-bypass-charging-phase2.py not found!"
+        exit 1
+    fi
+else
+    echo "[*] Bypass charging phase 2 disabled (EXTREME_BYPASS_PHASE2 not set)."
+fi
+
 if [ -f "apply-bootloader-spoof.py" ]; then
     echo "[*] Applying bootloader spoofing kernel hooks..."
     python3 apply-bootloader-spoof.py . || true
