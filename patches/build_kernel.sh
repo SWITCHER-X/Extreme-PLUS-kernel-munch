@@ -235,6 +235,19 @@ if [ -f "apply-fastcharge-bypass.py" ]; then
     python3 apply-fastcharge-bypass.py
 fi
 
+# Bypass charging — only when EXTREME_BYPASS=1. Default build is unchanged.
+if [ "${EXTREME_BYPASS:-0}" = "1" ]; then
+    if [ -f "apply-bypass-charging.py" ]; then
+        echo "[*] Applying EXTREME++ Bypass Charging (Phase 1)..."
+        python3 apply-bypass-charging.py . || { echo "❌ [BYPASS] Patch failed — aborting!"; exit 1; }
+    else
+        echo "❌ [BYPASS] EXTREME_BYPASS=1 but apply-bypass-charging.py not found!"
+        exit 1
+    fi
+else
+    echo "[*] Bypass charging disabled (EXTREME_BYPASS not set)."
+fi
+
 if [ -f "apply-bootloader-spoof.py" ]; then
     echo "[*] Applying bootloader spoofing kernel hooks..."
     python3 apply-bootloader-spoof.py . || true
