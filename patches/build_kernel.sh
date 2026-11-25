@@ -272,6 +272,14 @@ if [ -f "apply-millet-compat.py" ]; then
     python3 apply-millet-compat.py . || echo "⚠️ Millet patch skipped"
 fi
 
+echo "[*] Applying touch-jitter mitigations (WALT window debounce + FTS UNBLANK skip)..."
+python3 apply-touch-jitter.py .
+if ! grep -q "EXTREME++ TOUCH JITTER" kernel/sched/walt.c ||
+   ! grep -q "EXTREME++ TOUCH JITTER" drivers/input/touchscreen/focaltech_3658u/focaltech_core.c; then
+    echo "❌ [ERROR] Touch-jitter patch did not apply (walt.c / focaltech_core.c)."
+    exit 1
+fi
+
 # Hardening fs/susfs.c against Clang -Wunused-variable / -Wunused-function when features are disabled
 if [ -f "fs/susfs.c" ]; then
     echo "[*] Hardening fs/susfs.c against Clang -Wunused warnings..."
