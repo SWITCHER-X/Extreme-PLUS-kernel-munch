@@ -277,6 +277,11 @@ if [ -f "apply-dt2w-default.py" ]; then
     python3 apply-dt2w-default.py .
 fi
 
+if [ -f "apply-touch-jitter.py" ]; then
+    echo "[*] Applying touch-jitter mitigations (WALT window debounce + FTS UNBLANK skip)..."
+    python3 apply-touch-jitter.py .
+fi
+
 # Hardening fs/susfs.c against Clang -Wunused-variable / -Wunused-function when features are disabled
 if [ -f "fs/susfs.c" ]; then
     echo "[*] Hardening fs/susfs.c against Clang -Wunused warnings..."
@@ -318,6 +323,8 @@ check_marker "fs/proc/cmdline.c"           "EXTREME++: Bounded, buffer-safe cmdl
 check_marker "drivers"                     "EXTREME_MILLET_UNIVERSAL_COMPAT_V1"          "HyperOS millet dual-ABI compat"
 check_marker "drivers/power/supply"        "BYPASS_VOTER"                               "true bypass charging"
 check_marker "drivers/input/touchscreen"    "EXTREME++ DT2W"                             "double-tap-to-wake default"
+
+check_marker "kernel/sched/walt.c"        "EXTREME++ TOUCH JITTER"                     "touch jitter mitigation"
 check_marker "drivers/power/supply/ti"     "min_adapter_volt_required.*8500"            "PPS fast-charge unlock"
 
 if [ -n "${PATCH_ERRORS}" ]; then
