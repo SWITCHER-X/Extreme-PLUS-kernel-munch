@@ -1,0 +1,112 @@
+name: "🧪 Build EXTREME++ Manual Hook (SuSFS-free, EXPERIMENTAL)"
+
+# Experimental, dispatch-only: the susfs-free KernelSU manual-hook variant.
+# No releases, no Telegram, no EKM APK, no repack. Artifact only.
+on:
+  workflow_dispatch:
+    inputs:
+      target_os:
+        description: 'Target OS: hyperos | miui | both'
+        required: true
+        type: choice
+        default: 'hyperos'
+        options:
+          - 'hyperos'
+          - 'miui'
+          - 'both'
+
+jobs:
+  build:
+    name: "Manual Hook (EXPERIMENTAL)"
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 180
+
+    steps:
+      - name: "📦 Checkout config repo"
+        uses: actions/checkout@v4
+
+      - name: "🛠️ Install build dependencies"
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip unzip zlib1g-dev python3 python3-pip
+
+      - name: "⚡ Setup ZyC-Clang 16"
+        run: |
+          mkdir -p $HOME/zyc-clang
+          curl -L "https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz" -o clang.tar.gz
+          tar -xzf clang.tar.gz -C $HOME/zyc-clang
+          rm clang.tar.gz
+
+      - name: "🌐 Clone kernel source (Build #125 pinned base)"
+        run: |
+          mkdir kernel && cd kernel
+          git init
+          git remote add origin https://github.com/AstideLabs/android_kernel_xiaomi_sm8250
+          git fetch --depth=1 origin refs/pull/74/merge
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "fcf366797808bcc938a7248cded079cf6ea2e26d"
+          cd ..
+
+      - name: "⚙️ Inject PandeyJI Custom Build Script"
+        run: |
+          cp patches/* kernel/
+          chmod +x kernel/build_kernel.sh
+
+      - name: "💾 Allocate 10GB Swap Memory (Anti-Crash Hack)"
+        run: |
+          echo "[*] Checking current RAM..."
+          free -h
+          echo "[*] Injecting 10GB Virtual RAM (Swap) on SSD..."
+          sudo fallocate -l 10G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          echo "[*] New RAM Capacity:"
+          free -h
+
+      - name: "🔨 Compile EXTREME++ Manual Hook Kernel (EXPERIMENTAL)"
+        run: |
+          cd kernel
+          ./build_kernel.sh munch ksu_manual "${{ inputs.target_os }}"
+          echo "✅ Built ZIP files:"
+          ls -lh EXTREME++*.zip
+
+      # Belt and braces: the build script already asserts this, but a green
+      # build must never again ship a "manual hook" kernel with no hooks.
+      - name: "🔎 Assert manual-hook .config + patched sources (independent check)"
+        run: |
+          set -euo pipefail
+          found=0
+          for os in hyperos aosp; do
+            cfg="kernel/out_${os}/.config"
+            [ -f "$cfg" ] || continue
+            found=$((found + 1))
+            echo "── [$os] $cfg"
+            grep -q '^CONFIG_KSU=y' "$cfg"                          || { echo "::error::$os: CONFIG_KSU=y missing"; exit 1; }
+            grep -q '^CONFIG_KSU_MANUAL_HOOK=y' "$cfg"              || { echo "::error::$os: CONFIG_KSU_MANUAL_HOOK=y missing"; exit 1; }
+            if grep -q '^CONFIG_KSU_SUSFS=y' "$cfg"; then
+              echo "::error::$os: CONFIG_KSU_SUSFS=y must not be set in the manual variant"
+              exit 1
+            fi
+            echo "  CONFIG_KSU=y  CONFIG_KSU_MANUAL_HOOK=y  CONFIG_KSU_SUSFS not set ✅"
+          done
+          [ "$found" -gt 0 ] || { echo "::error::No kernel/out_*/.config was produced"; exit 1; }
+
+          for f in fs/exec.c fs/stat.c fs/open.c kernel/reboot.c; do
+            grep -q 'EXTREME++ KSU MANUAL HOOK' "kernel/$f" \
+              || { echo "::error::$f is missing the EXTREME++ KSU MANUAL HOOK call sites"; exit 1; }
+            echo "  marker ok: $f ✅"
+          done
+
+          echo "✅ Manual-hook build verified: manual hook selected, SuSFS off, 4 sources patched."
+          grep '^CONFIG_KSU_MANUAL_HOOK_AUTO' kernel/out_*/.config || true
+
+      - name: "📦 Upload EXPERIMENTAL artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: EXTREME-manual-EXPERIMENTAL
+          path: kernel/EXTREME++*.zip
+          retention-days: 14
+          if-no-files-found: error

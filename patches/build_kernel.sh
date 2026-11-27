@@ -26,6 +26,9 @@ case "$ROOT_MODE" in
     ksu_no_susfs|nosusfs|no_susfs|ksunosusfs)
         ROOT_MODE="ksu_no_susfs"
         ;;
+    ksu_manual|manual|manualhook|nosusfs_manual)
+        ROOT_MODE="ksu_manual"
+        ;;
     noroot|clean|false|0)
         ROOT_MODE="noroot"
         ;;
@@ -352,6 +355,7 @@ build_target_os() {
     local OS_UPPER=$(echo "$OS" | tr '[:lower:]' '[:upper:]')
     local ENABLE_KSU=0
     local ENABLE_SUSFS=0
+    local ENABLE_MANUAL=0
     local ROOT_LABEL="Pure Clean Base"
     local ROOT_BANNER="Pure Clean Base (No Root)"
     local ZIP_SUFFIX="NoRoot"
@@ -368,6 +372,13 @@ build_target_os() {
         ROOT_LABEL="KowSU Multi-Manager (No SuSFS)"
         ROOT_BANNER="KowSU Multi-Manager (No SuSFS Features, Core Linked)"
         ZIP_SUFFIX="KowSU_NoSuSFS"
+    elif [ "$ROOT_TYPE" == "3" ] || [ "$ROOT_TYPE" == "ksu_manual" ]; then
+        ENABLE_KSU=1
+        ENABLE_SUSFS=0
+        ENABLE_MANUAL=1
+        ROOT_LABEL="KowSU Manual Hook (SuSFS-free, EXPERIMENTAL)"
+        ROOT_BANNER="KowSU Manual Hook (SuSFS-free, EXPERIMENTAL)"
+        ZIP_SUFFIX="KowSU_ManualHook_EXPERIMENTAL"
     fi
     local OUT_DIR="${KERNEL_DIR}/out_${OS}"
     local MAKE_OPTS=(
@@ -450,8 +461,19 @@ build_target_os() {
         -d DEBUG_KMEMLEAK \
         -d DEBUG_PREEMPT
 
-    # 6. Root Configuration (ksu_susfs vs ksu_no_susfs vs noroot)
-    if [ "$ENABLE_KSU" -eq 1 ]; then
+    # 6. Root Configuration (ksu_susfs vs ksu_no_susfs vs ksu_manual vs noroot)
+    if [ "$ENABLE_MANUAL" -eq 1 ]; then
+        echo "[*] Injecting KowSU Manual Hook (SuSFS-free, EXPERIMENTAL) Configuration into ${OS_UPPER} .config..."
+        scripts/config --file "${OUT_DIR}/.config" \
+            -e KSU \
+            -d KSU_SUSFS \
+            -d KSU_TRACEPOINT_HOOK \
+            -e KSU_MANUAL_HOOK \
+            -e KSU_MULTI_MANAGER_SUPPORT \
+            -e THREAD_INFO_IN_TASK \
+            -d KSU_DISABLE_MANAGER \
+            -d KSU_DISABLE_POLICY
+    elif [ "$ENABLE_KSU" -eq 1 ]; then
         if [ "$ENABLE_SUSFS" -eq 1 ]; then
             echo "[*] Injecting Full RKSU / KowSU + SuSFS v2.3.0 Configuration into ${OS_UPPER} .config..."
             scripts/config --file "${OUT_DIR}/.config" \
@@ -637,7 +659,30 @@ build_target_os() {
             echo "❌ [ERROR] KernelSU is missing from a rooted build."
             exit 1
         fi
-        if [ "$ENABLE_SUSFS" -eq 1 ]; then
+        if [ "$ENABLE_MANUAL" -eq 1 ]; then
+            # SuSFS-free variant: the hook call sites come from
+            # apply-ksu-manual-hooks.py, so verify both the resolved .config
+            # and the patched sources instead of trusting the zip label.
+            if ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y' "${OUT_DIR}/.config"; then
+                echo "❌ [ERROR] Manual Hook variant built without CONFIG_KSU_MANUAL_HOOK=y."
+                grep '^CONFIG_KSU' "${OUT_DIR}/.config" || true
+                exit 1
+            fi
+            if grep -q '^CONFIG_KSU_SUSFS=y' "${OUT_DIR}/.config"; then
+                echo "❌ [ERROR] SuSFS is enabled in the Manual Hook variant."
+                grep '^CONFIG_KSU' "${OUT_DIR}/.config" || true
+                exit 1
+            fi
+            PATCH_ERRORS=""
+            check_marker "fs/exec.c"       "EXTREME++ KSU MANUAL HOOK" "KSU manual hook: execve/execveat"
+            check_marker "fs/stat.c"       "EXTREME++ KSU MANUAL HOOK" "KSU manual hook: newfstatat/newfstat/fstat64"
+            check_marker "fs/open.c"       "EXTREME++ KSU MANUAL HOOK" "KSU manual hook: faccessat"
+            check_marker "kernel/reboot.c" "EXTREME++ KSU MANUAL HOOK" "KSU manual hook: sys_reboot"
+            if [ -n "${PATCH_ERRORS}" ]; then
+                echo -e "❌ [ERROR] KSU manual-hook call sites are missing:${PATCH_ERRORS}"
+                exit 1
+            fi
+        elif [ "$ENABLE_SUSFS" -eq 1 ]; then
             if ! grep -q '^CONFIG_KSU_SUSFS=y' "${OUT_DIR}/.config"; then
                 echo "❌ [ERROR] SuSFS variant built without CONFIG_KSU_SUSFS=y."
                 exit 1
@@ -860,6 +905,23 @@ elif [ "$ROOT_MODE" == "ksu_susfs" ]; then
     fi
     if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ]; then
         build_target_os "aosp" 1
+    fi
+elif [ "$ROOT_MODE" == "ksu_manual" ]; then
+    echo "[*] Executing KowSU Manual Hook (SuSFS-free, EXPERIMENTAL) Build..."
+    inject_ksu_susfs
+    # inject_ksu_susfs() appends CONFIG_KSU_SUSFS=y to the defconfig; the manual
+    # variant must not inherit it, or olddefconfig keeps the SuSFS hook.
+    sed -i 's/^CONFIG_KSU_SUSFS=y/CONFIG_KSU_MANUAL_HOOK=y/' "arch/arm64/configs/${DEFCONFIG}" 2>/dev/null || true
+    echo "[*] Applying KSU manual-hook call sites (SuSFS-free variant)..."
+    if ! python3 apply-ksu-manual-hooks.py .; then
+        echo "❌ [ERROR] apply-ksu-manual-hooks.py failed; refusing to build a kernel with no KSU hooks."
+        exit 1
+    fi
+    if [ "$TARGET_OS" == "hyperos" ] || [ "$TARGET_OS" == "both" ]; then
+        build_target_os "hyperos" 3
+    fi
+    if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ]; then
+        build_target_os "aosp" 3
     fi
 elif [ "$ROOT_MODE" == "both" ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
