@@ -678,6 +678,7 @@ build_target_os() {
             check_marker "fs/stat.c"       "EXTREME++ KSU MANUAL HOOK" "KSU manual hook: newfstatat/newfstat/fstat64"
             check_marker "fs/open.c"       "EXTREME++ KSU MANUAL HOOK" "KSU manual hook: faccessat"
             check_marker "kernel/reboot.c" "EXTREME++ KSU MANUAL HOOK" "KSU manual hook: sys_reboot"
+            check_marker "fs/read_write.c" "EXTREME++ KSU MANUAL HOOK" "KSU manual hook: read() SuSFS-key guard"
             if [ -n "${PATCH_ERRORS}" ]; then
                 echo -e "❌ [ERROR] KSU manual-hook call sites are missing:${PATCH_ERRORS}"
                 exit 1

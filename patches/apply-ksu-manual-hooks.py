@@ -309,6 +309,54 @@ def patch_reboot(src):
     print(f"patched {path}")
 
 
+def patch_read_write(src):
+    path = os.path.join(src, "fs/read_write.c")
+    text = read(path)
+    if MARK in text:
+        print(f"info: {path} already patched")
+        return
+
+    # The base tree hooks read() for init.rc spoofing behind a bare
+    # CONFIG_KSU guard, but the static key it waits on is created by the
+    # SuSFS inline hook only. Manual builds spoof init.rc through ReSukiSU's
+    # LSM hook (CONFIG_KSU_MANUAL_HOOK_AUTO_INITRC_HOOK), so leave the
+    # SuSFS-only key out instead of leaving an undefined symbol at link.
+    text = replace_once(
+        text,
+        "#ifdef CONFIG_KSU\n"
+        "extern struct static_key_true ksu_is_init_rc_hook_enabled;\n"
+        "extern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd);\n"
+        "#endif\n",
+        "#ifdef CONFIG_KSU\n"
+        f"/* {MARK}: ksu_is_init_rc_hook_enabled only exists with SuSFS */\n"
+        "#if !defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)\n"
+        "extern struct static_key_true ksu_is_init_rc_hook_enabled;\n"
+        "#endif\n"
+        "extern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd);\n"
+        "#endif\n",
+        "read_write prototype",
+    )
+
+    text = replace_once(
+        text,
+        "#ifdef CONFIG_KSU\n"
+        "\tif (static_branch_unlikely(&ksu_is_init_rc_hook_enabled))\n"
+        "\t\tksu_handle_sys_read(fd);\n"
+        "#endif\n",
+        "#ifdef CONFIG_KSU\n"
+        "#if !defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)\n"
+        "\tif (static_branch_unlikely(&ksu_is_init_rc_hook_enabled))\n"
+        "\t\tksu_handle_sys_read(fd);\n"
+        "#endif\n"
+        "#endif\n",
+        "read_write call",
+    )
+
+    with open(path, "w") as fh:
+        fh.write(text)
+    print(f"patched {path}")
+
+
 def main():
     src = sys.argv[1] if len(sys.argv) > 1 else "."
     if not os.path.isfile(os.path.join(src, "fs/exec.c")):
@@ -319,6 +367,7 @@ def main():
         patch_stat(src)
         patch_open(src)
         patch_reboot(src)
+        patch_read_write(src)
     except PatchError as exc:
         print(f"error: [KSU MANUAL HOOK] {exc}", file=sys.stderr)
         return 1

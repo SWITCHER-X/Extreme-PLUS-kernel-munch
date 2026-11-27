@@ -94,7 +94,7 @@ jobs:
           done
           [ "$found" -gt 0 ] || { echo "::error::No kernel/out_*/.config was produced"; exit 1; }
 
-          for f in fs/exec.c fs/stat.c fs/open.c kernel/reboot.c; do
+          for f in fs/exec.c fs/stat.c fs/open.c kernel/reboot.c fs/read_write.c; do
             grep -q 'EXTREME++ KSU MANUAL HOOK' "kernel/$f" \
               || { echo "::error::$f is missing the EXTREME++ KSU MANUAL HOOK call sites"; exit 1; }
             echo "  marker ok: $f ✅"
